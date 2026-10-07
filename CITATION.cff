@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 
 title: "Exploring subgroups"
-version: 1.0.1
-doi: 10.5281/zenodo.22895774
+version: 1.0.0
+doi: 10.5281/zenodo.23220392
 
 authors:
   - family-names: "Dethlefsen"

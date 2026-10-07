@@ -58,6 +58,11 @@ Run the application locally with:
 shiny::runApp()
 ```
 
+or access the deployed version online:
+
+[https://olraen-ml4ls-demo-unsupervised.share.connect.posit.cloud/](https://olraen-ml4ls-demo-unsupervised.share.connect.posit.cloud/)
+
+
 ## Reproduce the analysis
 
 Render the Quarto analysis from the project directory:
@@ -99,4 +104,5 @@ To restore the project environment:
 
 ```r
 renv::restore()
+```
 

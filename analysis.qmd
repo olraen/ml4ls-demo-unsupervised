@@ -1,0 +1,486 @@
+---
+title: "Prepare and explore data"
+format:
+  html:
+    toc: true
+    toc-location: right
+    toc-depth: 5
+    number-sections: false
+    code-fold: false
+    sidebar: true
+    collapse-level: 4
+editor: visual
+editor_options: 
+  chunk_output_type: console
+knitr:
+  opts_chunk: 
+    message: false
+    warning: false
+    code-fold: false
+    include: true
+    collapse: true
+    eval: true
+    fig.show: hold
+---
+
+
+## Introduction
+
+The main question is:
+
+Can we identify subgroups of individuals based only on gene-expression profiles, and do those subgroups differ in clinical characteristics?
+
+Follow-up questions: 
+
+- What characterizes the discovered clusters?
+- Do clusters differ in glucose, HbA1c, lipids, age, or other clinical variables?
+- Are some clusters enriched for individuals with BMI ≥ 30?
+- Which genes or clinical features contribute most to the separation between clusters?
+
+
+## Load packages
+
+```{r}
+#| label: load-packages
+
+# load packages
+rm(list=ls())
+library(tidyverse)
+
+```
+
+## Load data
+```{r}
+#| label: simulate-data
+#| include: false
+#| eval: false
+
+rm(list=ls())
+library(tidyverse)
+
+# library(faraway)
+# data(diabetes)
+# head(diabetes)
+# data_faraway <- diabetes
+# write_csv(data_faraway, "data/data-faraway-diabetes.csv")
+
+# Load the data
+input_diabetes <- read_csv("data/data-faraway-diabetes.csv") # data diabetes from faraway package
+
+genes_hsa <- read.csv("data/counts_anno.csv") %>% # gene annotations from a RNA-seq project
+  filter(hgnc_symbol != "") %>%
+  pull(hgnc_symbol)
+
+# Calculate median BMI to replace (temporary missing values)
+BMI_median <- median(input_diabetes$weight / (input_diabetes$height^2) * 703, na.rm = TRUE)
+
+# Create BMI variable
+data_diabetes <- input_diabetes %>%
+  mutate(BMI = round(weight / height^2 * 703, 2)) %>%
+  relocate(BMI, .after = id) %>%
+  mutate(BMI = replace_na(BMI, BMI_median)) %>%
+  mutate(`BMI>30` = cut(BMI, breaks = c(0, 29.9, 100), labels = c("0", "1"))) %>%
+  mutate(`BMI>30` = factor(`BMI>30`, levels = c(0, 1))) |>
+  relocate(`BMI>30`, .after = BMI)
+
+# Add simulated gene expression data
+data <- data_diabetes
+
+# Set parameters
+set.seed(123)
+n_samples <- nrow(data)
+n_genes <- 1000
+n_diff <- 330
+
+# Select some known obesity genes to include in the differentially expressed set
+# obesity_genes <- c("FTO", "MC4R", "LEP", "LEPR", "POMC", "PCSK1", "BDNF", "TMEM18", "NEGR1", "SH2B1")
+obesity_genes <- c("FTO", "MC4R", "LEP", "LEPR", "POMC", "PCSK1")
+
+# Select additional DE genes
+n_additional <- n_diff - length(obesity_genes)
+other_diff_genes <- sample(setdiff(genes_hsa, obesity_genes), n_additional)
+diff_gene_names <- c(obesity_genes, other_diff_genes)
+
+# Remaining non-differentially expressed genes
+non_diff_gene_names <- sample(setdiff(genes_hsa, diff_gene_names), n_genes - n_diff)
+
+# All genes
+all_gene_names <- sample(c(diff_gene_names, non_diff_gene_names), n_genes)
+
+# Simulate expression matrix (normal distribution)
+sim_matrix <- matrix(rnorm(n_samples * n_genes, mean = 0, sd = 1), 
+                     nrow = n_samples, ncol = n_genes)
+colnames(sim_matrix) <- all_gene_names
+
+# Add differential expression for selected genes
+# for (gene in diff_gene_names) {
+#   idx <- which(colnames(sim_matrix) == gene)
+#   sim_matrix[data$`BMI>30` == 1, idx] <- rnorm(sum(data$`BMI>30`== 1), mean = 0.3, sd = 1)
+#   sim_matrix[data$`BMI>30` == 0, idx]  <- rnorm(sum(data$`BMI>30` == 0), mean = 0, sd = 1)
+# }
+
+# for (gene in obesity_genes) {
+#   idx <- which(colnames(sim_matrix) == gene)
+#   sim_matrix[data$`BMI>30` == 1, idx] <- rnorm(sum(data$`BMI>30` == 1), mean = 0.7, sd = 1)
+#   sim_matrix[data$`BMI>30` == 0, idx]  <- rnorm(sum(data$`BMI>30` == 0), mean = 0, sd = 1)
+# }
+
+
+##
+
+# latent expression signal related to BMI>30
+latent_signal <- ifelse(data$`BMI>30` == 1, 1, 0) +
+  rnorm(n_samples, 0, 0.9)
+
+# moderate-effect genes
+for (gene in other_diff_genes) {
+  idx <- which(colnames(sim_matrix) == gene)
+
+  sim_matrix[, idx] <-
+    0.5 * latent_signal +
+    rnorm(n_samples, 0, 1)
+}
+
+# stronger obesity-related genes
+for (gene in obesity_genes) {
+  idx <- which(colnames(sim_matrix) == gene)
+
+  sim_matrix[, idx] <-
+    0.9 * latent_signal +
+    rnorm(n_samples, 0, 1)
+}
+
+##
+
+# Convert to data frame and combine with original data
+gene_df <- as.data.frame(sim_matrix)
+gene_df <- gene_df %>%
+  as_tibble() %>%
+  mutate(id = data$id) %>%
+  relocate(id, .before = everything())
+
+# Reintroduce missing data
+idx <- which(data$BMI == BMI_median)
+data$BMI[idx] <- NA
+data$`BMI>30`[idx] <- NA
+
+
+# Save to CSV if needed
+write_csv(data, "data/data-diabetes.csv")
+write_csv(gene_df, "data/data-diabetes-genes.csv")
+
+```
+
+```{r}
+#| label: load-data
+
+# Load the clinical data
+data_diabetes <- read_csv("data/data-diabetes.csv") |>
+    mutate(`BMI>30` = factor(`BMI>30`))
+
+# Load gene expression data
+data_expr <- read_csv("data/data-diabetes-genes.csv")
+
+# preview clinical data
+dim(data_diabetes)
+glimpse(data_diabetes)
+
+# From the glimpse output
+# - we can see that we have a mixture of numerical and categorical variables
+# - and we note that we have missing data, NAs
+
+# Check how many in each group
+table(data_diabetes$`BMI>30`)
+
+# preview gene expression data
+print(dim(data_expr))
+print(data_expr[1:5, 1:5])
+
+```
+
+## Explore data
+
+```{r}
+#| label: explore-data
+
+# run basic EDA
+# - let's look at the distribution of numerical variables
+# - missing data
+# - and correlation between clinical variables
+
+data_diabetes %>%
+  select("BMI>30", where(is.numeric), -id) %>% 
+  pivot_longer(-`BMI>30`, names_to = "variable", values_to = "value") %>% 
+  filter(is.finite(value)) %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 30, fill = "blue4", color = "white") +
+  facet_wrap(~ variable, scales = "free") +
+  theme_bw() +
+  labs(title = "Distribution of Numerical Variables") + 
+  ylab("")
+
+# stratify by BMI>30
+data_diabetes %>%
+  select("BMI>30", where(is.numeric), -id) %>% 
+  pivot_longer(-`BMI>30`, names_to = "variable", values_to = "value") %>% 
+  filter(is.finite(value)) %>%
+  ggplot(aes(x = value, fill = `BMI>30`)) +
+  geom_histogram(bins = 30, color = "white", position = "identity", alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_bw() +
+  labs(title = "Distribution of Numerical Variables") + 
+  ylab("") + 
+  scale_fill_manual(values = c("0" = "blue4", "1" = "red4")) 
+
+# summarize categorical variables by obesity status
+data_diabetes %>%
+  select("BMI>30", where(is.character), -id) %>%
+  pivot_longer(-`BMI>30`, names_to = "variable", values_to = "value") %>%
+  group_by(variable, value, `BMI>30`) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  ggplot(aes(x = value, y = count, fill = `BMI>30`)) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ variable, scales = "free") +
+  theme_bw() +
+  labs(title = "Counts of Categorical Variables by Obesity Status") +
+  ylab("") +
+  scale_fill_manual(values = c("0" = "blue4", "1" = "red4"))
+
+# distribution of randomly selected 10 genes
+data_expr %>%
+  select(id, sample(2:ncol(data_expr), 12)) %>%
+  pivot_longer(-id, names_to = "gene", values_to = "expression") %>%
+  ggplot(aes(x = expression)) +
+  geom_histogram(bins = 30, fill = "blue4", color = "white") +
+  facet_wrap(~ gene, scales = "free") +
+  theme_bw() +
+  labs(title = "Distribution of Randomly Selected Genes") + 
+  xlab("")
+
+```
+
+```{r}
+#| label: explore-missing-data
+#| fig-cap: 
+#| - "Number of missing data per variable, shows that bp.2d and bp.2s have more than 50% missing entries"
+
+# calculate number of missing data per variable
+data_na <- data_diabetes %>% 
+  summarise(across(everything(), ~ sum(is.na(.)))) 
+
+# make a table with counts sorted from highest to lowest
+data_na_long <- data_na %>%
+  pivot_longer(-id, names_to = "variable", values_to = "count") %>%
+  arrange(desc(count)) 
+
+# make a column plot to visualize the counts
+data_na_long %>%
+  ggplot(aes(x = variable, y = count)) + 
+  geom_col(fill = "blue4") + 
+  xlab("") + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+# Based on the number of missing data, let's delete bp.2s, bp.2d
+# and use complete-cases analysis 
+data_diabetes <- data_diabetes %>%
+  dplyr::select(-bp.2s, -bp.2d) %>%
+  na.omit()
+
+```
+
+## PCA
+
+```{r}
+#| label: pca
+#| echo: true
+#| code-fold: true
+#| code-summary: "Example code"
+#| eval: true
+
+# Perform PCA on gene expression data
+
+# filter gene expression data to include only those with obesity status
+x <- data_expr %>%
+  filter(id %in% data_diabetes$id) %>%
+  column_to_rownames("id") %>%
+  as.matrix()
+
+# Scale the data prior pca
+x_scaled <- scale(x)
+
+# Calculate PCA
+pca <- prcomp(x, center=TRUE, scale.=FALSE)
+eigs <- pca$sdev^2
+var_exp <- eigs / sum(eigs)
+
+res_pca <- data.frame(PC1=pca$x[,1], PC2=pca$x[,2], PC3=pca$x[,3], PC4=pca$x[,4], PC5=pca$x[,5]) |>
+    rownames_to_column("id") |> 
+    mutate(id = as.integer(id)) |>
+    as_tibble() |> 
+    left_join(data_diabetes, by="id")
+
+res_pca_loadings <- pca$rotation
+
+# show top 10 loadings along PC1
+res_pca_loadings |> 
+    as.data.frame() |> 
+    rownames_to_column("gene") |> 
+    arrange(desc(abs(PC1))) |> 
+    head(10) |> 
+    ggplot(aes(x=reorder(gene, PC1), y=PC1)) +
+    geom_bar(stat="identity", fill="steelblue") +
+    coord_flip() +
+    labs(title="Top genes contributing to PC1", x="gene", y="Loading") +
+    theme_minimal()
+
+
+# show PCA scores plot
+res_pca |>
+    ggplot(aes(x=PC1, y=PC2, group = `BMI>30`, fill = `BMI>30`)) +
+    geom_point(alpha = 0.6,  shape = 21, size = 2) +
+    labs(title="PCA scores plot", x="PC1", y="PC2") +
+    xlab(paste("PC1 (Var: ", round(var_exp[1] * 100, 2), "%)")) +
+    ylab(paste("PC2 (Var: ", round(var_exp[2] * 100, 2), "%)")) +
+    theme_minimal() +
+    theme(legend.title=element_blank()) + 
+  scale_fill_manual(values = c("0" = "blue4", "1" = "red4")) 
+
+```
+
+
+```{r}
+
+# choose how many PCs to retain for clustering
+var_exp <- pca$sdev^2 / sum(pca$sdev^2)
+cum_var <- cumsum(var_exp)
+
+plot(
+  cumsum(var_exp[1:400]),
+  type = "l",
+  xlab = "Number of PCs",
+  ylab = "Cumulative variance explained"
+)
+
+which(cum_var >= 0.5)[1]
+which(cum_var >= 0.7)[1]
+
+# This curve suggests there is no sharp elbow, variance is spread fairly broadly across many components.
+```
+
+## Clustering
+
+```{r}
+#| label: cluster-data
+
+# Use first 30 PCs for clustering for practical purposes only
+x_clust <- pca$x[, 1:30]
+
+# K-means clustering
+set.seed(123)
+
+km <- kmeans(
+  x_clust,
+  centers = 3,
+  nstart = 50
+)
+
+# Add cluster labels to PCA results
+res_pca$cluster <- factor(km$cluster)
+
+# Plot clusters on PC1 vs PC2
+res_pca %>%
+  ggplot(aes(x = PC1, y = PC2, fill = cluster)) +
+  geom_point(
+    shape = 21,
+    size = 2,
+    alpha = 0.7
+  ) +
+  theme_minimal() +
+  labs(
+    title = "K-means clusters",
+    x = paste0("PC1 (", round(var_exp[1] * 100, 2), "%)"),
+    y = paste0("PC2 (", round(var_exp[2] * 100, 2), "%)")
+  )
+
+
+# Add cluster assignment to PCA results
+res_pca$cluster <- factor(km$cluster)
+
+# Export cluster results
+dir.create("results", showWarnings = FALSE)
+
+saveRDS(
+  res_pca,
+  "results/res_pca.rds"
+)
+```
+
+## Explore clusters
+
+We can look into how clinical variables are distributed across the clusters
+```{r}
+
+# numerical variables, e.g. BMI
+res_pca |>
+  ggplot(aes(x = cluster, y = BMI, color = cluster)) +
+  geom_jitter() + 
+  geom_boxplot(alpha = 0.5) + 
+  theme_bw()
+
+# categorical variables, e.g. frame
+res_pca |>
+  count(cluster, frame) |>
+  group_by(cluster) |>
+  mutate(prop = n / sum(n)) |>
+  ggplot(aes(x = cluster, y = prop, fill = frame)) +
+  geom_col(position = "stack") +
+  theme_bw() +
+  labs(
+    x = "Cluster",
+    y = "Proportion",
+    fill = "Frame"
+  )
+
+```
+
+
+```{r}
+# Add cluster assignments to gene-expression data
+expr_clusters <- data_expr |>
+  inner_join(
+    res_pca |> select(id, cluster),
+    by = "id"
+  )
+
+# Calculate genes characterising each cluster
+gene_cluster_stats <- expr_clusters |>
+  pivot_longer(
+    -c(id, cluster),
+    names_to = "gene",
+    values_to = "expression"
+  ) |>
+  group_by(gene) |>
+  mutate(
+    mean_all = mean(expression),
+    sd_all = sd(expression)
+  ) |>
+  group_by(cluster, gene) |>
+  summarise(
+    mean_cluster = mean(expression),
+    mean_all = first(mean_all),
+    sd_all = first(sd_all),
+    .groups = "drop"
+  ) |>
+  mutate(
+    difference = (mean_cluster - mean_all) / sd_all
+  )
+
+saveRDS(
+  list(
+    res_pca = res_pca,
+    gene_cluster_stats = gene_cluster_stats
+  ),
+  "results/clustering_results.rds"
+)
+```

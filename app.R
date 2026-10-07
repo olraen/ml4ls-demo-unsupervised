@@ -29,6 +29,13 @@ clinical_vars <- c(
 ui <- fluidPage(
 
   titlePanel("Exploring gene-expression clusters"),
+    tags$p(
+    tags$a(
+      "View source code on GitHub",
+      href = "https://github.com/olraen/ml4ls-demo-unsupervised",
+      target = "_blank"
+    )
+  ),
 
   sidebarLayout(
 
